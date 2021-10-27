@@ -30,7 +30,7 @@ class RPMBuildError(Exception):
 
 class RPM:
     """ Given a python source distribution and a template config, build source, binary, or spec RPM files """
-    def __init__(self, config='setup.cfg', flavour='base_templates', **kwargs):
+    def __init__(self, config=None, flavour='base_templates', **kwargs):
         """ Setup the various configurations and templates to start converting
 
         Args:
@@ -43,7 +43,12 @@ class RPM:
         with importlib_resources.path('pysrpm', 'presets') as defaults_path:
             self.config.read(sorted(defaults_path.glob('*.conf')))
 
-        self.load_user_config(config)
+        if config is not None:
+            self.load_user_config(config)
+        elif pathlib.Path('pyproject.toml').exists():
+            self.load_user_config('pyproject.toml')
+        else:
+            self.load_user_config('setup.cfg')
         self.config.read_dict({'pysrpm': kwargs}, source='CLI')
 
         # Set config params from loaded config
@@ -71,12 +76,19 @@ class RPM:
         Returns:
             `dict` or `None`: A dictionary of section name to section template
         """
-        parser = configparser.ConfigParser()
-        parser.read(path)
-        prefix = 'pysrpm.' if any(section.startswith('pysrpm.') for section in parser.sections()) else ''
+        if pathlib.Path(path).suffix == '.toml':
+            with open(path, 'rb') as f:
+                config = tomli.load(f).get('tool', {}).get('pysrpm', {})
+            # Move anything directy under 'pysrpm' into a nested table
+            config['pysrpm'] = {key: config.pop(key) for key, value in data.copy().items() if type(value) is not dict}
+        else:
+            parser = configparser.ConfigParser()
+            parser.read(path)
+            prefix = 'pysrpm.' if any(section.startswith('pysrpm.') for section in parser.sections()) else ''
+            config = {cfgsec.replace(prefix, ''): dict(parser.items(cfgsec)) for cfgsec in parser.sections()
+                      if cfgsec.startswith(prefix) or cfgsec == 'pysrpm'}
 
-        self.config.read_dict({cfgsec.replace(prefix, ''): dict(parser.items(cfgsec)) for cfgsec in parser.sections()
-                               if cfgsec.startswith(prefix) or cfgsec == 'pysrpm'}, source=path)
+        self.config.read_dict(config, source=path)
 
     @staticmethod
     @contextmanager
