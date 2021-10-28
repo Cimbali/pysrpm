@@ -90,8 +90,21 @@ class RPM:
             tf.extractall(self.tempdir, safe_members)
 
 
+    def _make_directories(self):
+        """ Ensure the necessary directories exist """
+        self.dest_dir.mkdir(parents=True, exist_ok=True)
+        if self.config.getboolean('pysrpm', 'spec_only'):
+            return
+
+        for d in ('SOURCES', 'SPECS', 'BUILD', 'RPMS', 'SRPMS'):
+            self.rpm_base.joinpath(d).mkdir(parents=True, exist_ok=True)
+
+
     def __exit__(self, exc_type, exc_value, traceback):
         """ Cleanup any temporary directories and files we extracted """
+        if not self.config.getboolean('pysrpm', 'keep_temp') and not self.config.getboolean('pysrpm', 'spec_only'):
+            shutil.rmtree(self.rpm_base)
+
         try:
             shutil.rmtree(self.tempdir)
         except AttributeError:
@@ -343,20 +356,6 @@ class RPM:
         return '\n'.join(spec)
 
 
-    def _make_directories(self, spec_only):
-        """ Ensure the necessary directories exist
-
-        Args:
-            spec_only (`bool`): Whether we only build the spec file or also some RPM files
-        """
-        self.dest_dir.mkdir(parents=True, exist_ok=True)
-        if spec_only:
-            return
-
-        for d in ('SOURCES', 'SPECS', 'BUILD', 'RPMS', 'SRPMS'):
-            self.rpm_base.joinpath(d).mkdir(parents=True, exist_ok=True)
-
-
     def _copy(self, orig, dest):
         """ Copy file from orig to dest, replacing if it exists, hard-linking if possible
 
@@ -391,13 +390,14 @@ class RPM:
             print(spec)
             return
 
-        self._make_directories(spec_only)
+        self._make_directories()
 
         spec_file = (self.dest_dir if spec_only else self.rpm_base / 'SPECS') / f'{pkg_info["rpmname"]}.spec'
         with open(spec_file, 'w') as f:
             print(spec, file=f)
 
         if spec_only:
+            print(spec_file)
             return
 
         # Determine the binary and source rpm names that should be built out of this spec file
@@ -446,6 +446,7 @@ class RPM:
                 raise RPMBuildError('Expected source rpm not found')
             if not dry_run:
                 srpm.replace(self.dest_dir / source_rpm.name)
+                print(self.dest_dir / source_rpm.name)
 
         if not source_only:
             if not any((self.rpm_base / 'RPMS' / rpm).exists() for rpm in binary_rpms):
@@ -455,3 +456,4 @@ class RPM:
                 rpm = self.rpm_base / 'RPMS' / rpm
                 if srpm.exists() and not dry_run:
                     rpm.replace(self.dest_dir / rpm.name)
+                    print(self.dest_dir / rpm.name)
