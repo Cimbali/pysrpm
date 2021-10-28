@@ -5,10 +5,11 @@ import click
 from pysrpm.rpm import RPM
 
 
-@click.command()
-@click.argument('sources', type=click.Path(exists=True), nargs=-1)
+@click.command(help='Convert a python source package to RPM')
+@click.argument('source', type=click.Path(exists=True), nargs=1)
 @click.option('--flavour', help='RPM targets a specific linux flavour', type=str)
-@click.option('--config', help='Specify an additional config file', type=click.Path(exists=True, dir_okay=False))
+@click.option('--config', help='Specify a config file manually, replaces any configuration from within the package',
+              type=click.Path(exists=True, dir_okay=False))
 # Override options whose defaults are under [pysrpm] in defaults.conf, with "_" replaced by "-"
 @click.option('--release', help='Release of the RPM package', type=str)
 @click.option('--rpm-base', help='Build directory', type=click.Path(exists=False, file_okay=False))
@@ -28,11 +29,14 @@ from pysrpm.rpm import RPM
               help='Automatically convert python dependencies to RPM package dependencies', default=None)
 @click.option('--requires-extras', help='Extras from python package to include as requires (if extracting)', type=str)
 @click.option('--suggests-extras', help='Extras from python package to include as suggests (if extracting)', type=str)
-def cli(sources, **kwargs):
-    """ Handle command line interface """
-    rpm_builder = RPM(**{option: value for option, value in kwargs.items() if value is not None})
-    for src in sources:
-        rpm_builder.run(src)
+def cli(source, **kwargs):
+    """ Handle command line interface. Options passed on the command line override options from any config file.
+
+    Args:
+        source (:class:`~click.Path`): the source package to convert
+    """
+    with RPM(source, **{option: value for option, value in kwargs.items() if value is not None}) as rpm_builder:
+        rpm_builder.run()
 
 
 if __name__ == '__main__':

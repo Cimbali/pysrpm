@@ -11,9 +11,10 @@ import tempfile
 import subprocess
 import configparser
 import pep517.meta
-from contextlib import contextmanager
+import pep517.build
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
+from collections import OrderedDict
 
 try:
     import importlib.resources as importlib_resources
@@ -30,42 +31,117 @@ class RPMBuildError(Exception):
 
 class RPM:
     """ Given a python source distribution and a template config, build source, binary, or spec RPM files """
-    def __init__(self, config=None, flavour='base_templates', **kwargs):
+    def __init__(self, source, config=None, **cli_args):
         """ Setup the various configurations and templates to start converting
 
         Args:
+            source (`str` or path-like): Path to the source package to convert
             config (`str` or path-like): Path to a configuration file
-            flavour (`str`): Name of an rpm-based linux flavour, i.e. the name of a config section containing templates
         """
-        # Set config params from defaults, config file, from CLI arguments (in kwargs)
-        self.config = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolation())
-
+        self.config = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolation(),
+                                                dict_type=OrderedDict)
         with importlib_resources.path('pysrpm', 'presets') as defaults_path:
             self.config.read(sorted(defaults_path.glob('*.conf')))
 
-        if config is not None:
-            self.load_user_config(config)
-        elif pathlib.Path('pyproject.toml').exists():
-            self.load_user_config('pyproject.toml')
-        else:
-            self.load_user_config('setup.cfg')
-        self.config.read_dict({'pysrpm': kwargs}, source='CLI')
+        self.config_file = config
+        self.cli_args = cli_args
+        source = pathlib.Path(source)
+        if not source.exists():
+            raise FileNotFoundError(str(source))
+        self.root = source if source.is_dir() else None
+        self.source = source if source.is_file() else None
+
+
+    def __enter__(self):
+        """ Context manager to inspect the contents of a source package in a temporary non-archive directory
+
+        We could for some cases simply inspect the file and load files from it without extracting them to a directory,
+        but it’s a hassle to keep the several code paths. Now we uniquely manage source directories, tarballs that
+        require full extraction, and tarballs that require only partial extraction.
+        """
+        if self.root is not None:
+            return self
+
+        if '.tar' not in self.source.suffixes[-2:]:
+            raise ValueError('Expected tarball as source file')
+
+        self.tempdir = tempfile.mkdtemp()
+        with tarfile.open(self.source) as tf:
+            for name in tf.getnames():
+                if any(fnmatch.fnmatch(name, pat) for pat in ['*/pyproject.toml', '*/PKG-INFO', '*/setup.cfg']):
+                    tf.extract(name, self.tempdir)
+        try:
+            self.root = next(pathlib.Path(self.tempdir).glob('*/PKG-INFO')).parent
+        except StopIteration:
+            raise ValueError('Malformed source file: can’t find metadata')
+        return self
+
+
+    def full_extraction(self):
+        """ Ensures the source package is fully extracted to the temporary directory """
+        if not hasattr(self, 'tempdir') or not self.source:
+            return
+
+        with tarfile.open(self.source) as tf:
+            # Only extract files that will resolve within the destination directory − also skip existing files
+            tempdir = self.tempdir.resolve()
+            safe_members = [name for name, dest in ((name, (tempdir / name).resolve()) for name in tf.getnames())
+                            if dest.parts[:len(tempdir.parts)] == tempdir.parts and not dest.exists()]
+            tf.extractall(self.tempdir, safe_members)
+
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """ Cleanup any temporary directories and files we extracted """
+        try:
+            shutil.rmtree(self.tempdir)
+        except AttributeError:
+            pass
+
+
+    def load_configuration(self, rootdir):
+        """ Configure the RPM building, loading the various configurations in order
+
+        Args:
+            rootdir (:class:`~pathlib.Path`): Path to the directory containing the source distribution of the package
+        """
+        # Load any config file, specified or from the package
+        if self.config_file is not None:
+            self.load_user_config(self.config_file)
+        elif rootdir.joinpath('pyproject.toml').exists():
+            self.load_user_config(rootdir / 'pyproject.toml')
+        elif rootdir.joinpath('setup.cfg').exists():
+            self.load_user_config(rootdir / 'setup.cfg')
+
+        if self.config.has_section('__templates__'):
+            raise ValueError('The section name "__templates__" is reserved, do not use it in your configuration files')
+
+        # Load CLI last as it needs to override previous options.
+        self.config.read_dict({
+            'pysrpm': dict(tup for tup in self.cli_args.items() if self.config.has_option('pysrpm', tup[0])),
+            '__templates__': dict(tup for tup in self.cli_args.items() if not self.config.has_option('pysrpm', tup[0])),
+        }, source='CLI')
 
         # Set config params from loaded config
         self.dest_dir = pathlib.Path(self.config.get('pysrpm', 'dest_dir'))
         self.rpm_base = pathlib.Path(self.config.get('pysrpm', 'rpm_base'))
-        env_markers = (line.split(':') for line in self.config.get('pysrpm', 'environment_markers').strip().split('\n'))
-        self.environments = {key.strip(): val.strip() for key, val in env_markers}
-        self.optional_keys = set(self.config.get('pysrpm', 'optional_keys').split())
 
-        # Load flavoured templates
-        inherit_templates = [self.config.get('pysrpm', 'flavour', fallback=flavour)]
-        while inherit_templates[-1] != 'base_templates':
-            inherit_templates.append(self.config.get(inherit_templates[-1], 'inherits', fallback='base_templates'))
+        # Inherit from parent sections by copying raw templates down, which allows the interpolations to be re-evaluated
+        self.config.set('__templates__', 'inherits', self.config.get('pysrpm', 'flavour', fallback='base'))
+        for section in self.config.sections():
+            if section in ['base', 'pysrpm']:
+                continue
 
-        self.templates = {}
-        for section in reversed(inherit_templates):
-            self.templates.update(dict(self.config.items(section)))
+            parent = self.config.get(section, 'inherits', fallback='base')
+            self.config.read_dict({section: {key: value for key, value in self.config.items(parent, raw=True) if not
+                                             self.config.has_option(section, key)}}, 'inherited')
+
+        self.templates = dict(self.config.items('__templates__'))
+        self.templates['optional_keys'] = set(self.templates['optional_keys'].split())
+
+        # Extract additional files if required to get the package metadata
+        if self.config.getboolean('pysrpm', 'extract_dependencies'):
+            self.full_extraction()
+
 
     def load_user_config(self, path):
         """ Load a config file into the RPM’s configparser, only evaluating interpolations in our own config parser
@@ -80,7 +156,7 @@ class RPM:
             with open(path, 'rb') as f:
                 config = tomli.load(f).get('tool', {}).get('pysrpm', {})
             # Move anything directy under 'pysrpm' into a nested table
-            config['pysrpm'] = {key: config.pop(key) for key, value in data.copy().items() if type(value) is not dict}
+            config['pysrpm'] = {key: config.pop(key) for key, value in config.copy().items() if type(value) is not dict}
         else:
             parser = configparser.ConfigParser()
             parser.read(path)
@@ -90,29 +166,8 @@ class RPM:
 
         self.config.read_dict(config, source=path)
 
-    @staticmethod
-    @contextmanager
-    def extract_package_to_tempdir(source):
-        """ Context manager to inspect the contents of a source package in a temporary non-archive directory
 
-        Args:
-            source (`str` or path-like): Path to the source file
-
-        Yields:
-            :class:`~pathlib.Path`: The directory containing the package, inside the temporary directory
-        """
-        tempdir = tempfile.mkdtemp()
-        with tarfile.open(source) as tf:
-            tf.extractall(tempdir)
-        try:
-            yield next(pathlib.Path(tempdir).glob('*/PKG-INFO')).parent
-        except StopIteration:
-            raise ValueError('Malformed source file: can’t find metadata')
-        finally:
-            shutil.rmtree(tempdir)
-
-    @staticmethod
-    def load_source_metadata(source, with_deps=False):
+    def load_source_metadata(self, root, with_deps=False):
         """ Extract package metadata from a python source package
 
         Ideally we could just read from the {package}-{version}/PKG-INFO file inside the tarball,
@@ -123,47 +178,43 @@ class RPM:
         package and the pep517 package ensures backends are installed, etc.
 
         Args:
-            source (`str` or path-like): Path to a source distribution of the package
+            root (:class:`~pathlib.Path`): Path to a directory containing source distribution of the package
             with_deps (`bool`): Whether to extract
 
         Returns:
             `dict`: The metadata as a dictionary of keys to strings, or to lists of strings for multiple metadata
         """
-        source = pathlib.Path(source)
-        if '.tar' not in source.suffixes[-2:]:
-            raise ValueError('Expected tarball as source file')
+        # Location of PKG-INFO for extracted tarballs, which is the main use case. If missing, get/rebuild the metadata
+        pkg_info = root / 'PKG-INFO'
 
-        pyproject_data = {
+        # Also try usual location for setuptools develop packages
+        if not pkg_info.exists():
+            try:
+                pkg_info = next(root.glob('*.egg-info/PKG-INFO'))
+            except StopIteration:
+                pass
+
+        if with_deps or not pkg_info.exists():
+            self.full_extraction()  # May be needed?
+            dist_meta = pep517.meta.load(root).metadata
+        else:
+            # Metadata from importlib.metadata is an email.Message, so do the same here
+            with open(pkg_info, 'rb') as f:
+                dist_meta = email.message_from_binary_file(f)
+            dist_meta.set_param('charset', 'utf8')
+
+        pyproject = root / 'pyproject.toml'
+        self.build_system = {
             'requires': ['setuptools>=40.8.0', 'wheel'],
             'build-backend': 'setuptools.build_meta:__legacy__',
         }
-
-        if with_deps:
-            with RPM.extract_package_to_tempdir(source) as root:
-                pyproject = root.joinpath('pyproject.toml')
-                if pyproject.exists():
-                    with open(pyproject, 'rb') as f:
-                        pyproject_data.update(tomli.load(f)['build-system'])
-                dist_meta = pep517.meta.load(root).metadata
-
-        else:
-            with tarfile.open(source) as tf:
-                pyproject = fnmatch.filter(tf.getnames(), '*/pyproject.toml')
-                if pyproject:
-                    with tf.extractfile(pyproject[0]) as f:
-                        pyproject_data.update(tomli.load(f)['build-system'])
-
-                pkg_info = fnmatch.filter(tf.getnames(), '*/PKG-INFO')
-                if not pkg_info:
-                    raise ValueError('Malformed source file: can’t find metadata')
-                # Metadata from importlib.metadata is an email.Message, so do the same here
-                with tf.extractfile(pkg_info[0]) as f:
-                    dist_meta = email.message_from_binary_file(f)
-                dist_meta.set_param('charset', 'utf8')
+        if pyproject.exists():
+            with open(pyproject, 'rb') as f:
+                self.build_system.update(tomli.load(f)['build-system'])
 
         metadata = {
-            'build-requires': pyproject_data['requires'],
-            'build-backend': pyproject_data['build-backend'],
+            'build-requires': self.build_system['requires'],
+            'build-backend': self.build_system['build-backend'],
             'long-description': dist_meta.get_payload(),
         }
 
@@ -179,7 +230,15 @@ class RPM:
             else:
                 metadata[key.lower()] = value
 
-        return metadata
+        return {
+            **metadata,
+            'rpmname': self.templates['package_prefix'] + metadata['name'],
+            'rpmversion': metadata['version'].replace('-', '_'),
+            'release': self.config.get('pysrpm', 'release'),
+            'arch': self.templates['arch'],
+            'sourcefile': self.templates['source_name'].format(**metadata),
+        }
+
 
     def convert_python_req(self, reqs, extras=[]):
         """ Compute the version-specified dependency list for a package
@@ -192,8 +251,10 @@ class RPM:
             `list`: A list of string representations for the package dependency with versions
         """
         rpm_reqs = []
+        env_markers = (line.split(':') for line in self.templates['environment_markers'].strip().split('\n'))
+        environments = {'extra': extras, **{key.strip(): val.strip() for key, val in env_markers}}
         for req in (Requirement(req) for req in reqs):
-            condition = simplify_marker_to_rpm_condition(req.marker, self.environments, self.templates)
+            condition = simplify_marker_to_rpm_condition(req.marker, environments, self.templates)
             if condition is False:
                 continue
 
@@ -206,6 +267,7 @@ class RPM:
                 rpm_reqs.append(f'({versioned_package} {condition})')
 
         return rpm_reqs
+
 
     def _format_lines(self, template, **kwargs):
         """ Split a template into lines and .format() them, returning a list of successfully formatted lines
@@ -223,7 +285,7 @@ class RPM:
             try:
                 line = line.format(**kwargs)
             except KeyError as err:
-                if not set(err.args) <= self.optional_keys:
+                if not set(err.args) <= self.templates['optional_keys']:
                     raise
             except ValueError:
                 print('Error formatting line:', line, file=sys.stderr)
@@ -231,6 +293,7 @@ class RPM:
             else:
                 successful_lines.append(line)
         return successful_lines
+
 
     def make_spec(self, pkg_info):
         """ Build the spec file for this RPM according to package pkg_info and templates
@@ -249,35 +312,36 @@ class RPM:
         deps = pkg_info.get('requires-dist', []) if extract_deps else []
         extras = pkg_info.get('provides-extra', []) if extract_deps else []
 
-        requires_extras = {match for pattern in self.config.get('pysrpm', 'requires_extras').split()
+        requires_extras = {match for pattern in self.templates['requires_extras'].split()
                            for match in fnmatch.filter(extras, pattern)}
-        suggests_extras = {match for pattern in self.config.get('pysrpm', 'suggests_extras').split()
+        suggests_extras = {match for pattern in self.templates['suggests_extras'].split()
                            for match in fnmatch.filter(extras, pattern)}
 
         # Generate required dependencies
-        required = self.config.get('pysrpm', 'requires').replace('\n', ' ')
+        required = self.templates['requires'].replace('\n', ' ')
         required = ([required] if required else []) + self.convert_python_req(deps, requires_extras)
-        python_version = self.config.get('pysrpm', 'python_version', fallback=pkg_info.get('requires-python'))
+        python_version = self.templates['python_version'] or pkg_info.get('requires-python')
         if python_version:
             required.append(specifier_to_rpm_version('python(abi)', SpecifierSet(python_version)))
         if required:
             spec.append('Requires: ' + ', '.join(required))
 
         # Generate optional dependencies
-        optional = self.config.get('pysrpm', 'suggests').replace('\n', ' ')
+        optional = self.templates['suggests'].replace('\n', ' ')
         optional = ([optional] if optional else []) + self.convert_python_req(deps, suggests_extras)
-        opt_key = self.config.get('pysrpm', 'optional_dependency_tag')
+        opt_key = self.templates['optional_dependency_tag']
         if opt_key and set(optional) - set(required):
             spec.append(f'{opt_key}: ' + ', '.join(req for req in optional if req not in required))
 
         # Generate the rest of the file
-        sections = self.config.options('base_templates')
+        sections = self.config.options('base')
         for section in sections[sections.index('preamble') + 1:]:
             section_spec = self._format_lines(self.templates[section], **pkg_info)
             if any(section_spec):
                 spec.extend(['', f'%{section}{" " if section_spec[0] else ""}{section_spec[0]}', *section_spec[1:]])
 
         return '\n'.join(spec)
+
 
     def _make_directories(self, spec_only):
         """ Ensure the necessary directories exist
@@ -292,6 +356,7 @@ class RPM:
         for d in ('SOURCES', 'SPECS', 'BUILD', 'RPMS', 'SRPMS'):
             self.rpm_base.joinpath(d).mkdir(parents=True, exist_ok=True)
 
+
     def _copy(self, orig, dest):
         """ Copy file from orig to dest, replacing if it exists, hard-linking if possible
 
@@ -300,7 +365,7 @@ class RPM:
             dest (`pathlib.Path`): destination path
         """
         if dest.is_dir():
-            dest = dest.joinpath(orig.name)
+            dest = dest / orig.name
         if dest.exists():
             dest.unlink()
         try:
@@ -308,23 +373,11 @@ class RPM:
         except Exception:
             shutil.copy2(orig, dest)
 
-    def run(self, source):
-        """ Create the requested files: either spec, source RPM, and/or binary RPM
 
-        Args:
-            source (`str` or path-like): Path to a source distribution of the package
-        """
-        # Setup information to interpolate the templates
-        source = pathlib.Path(source)
-        if not source.exists():
-            raise FileNotFoundError(str(source))
-
-        pkg_info = self.load_source_metadata(source)
-        pkg_info['rpmname'] = self.config.get('pysrpm', 'package_prefix') + pkg_info['name']
-        pkg_info['rpmversion'] = pkg_info['version'].replace('-', '_')
-        pkg_info['release'] = self.config.get('pysrpm', 'release')
-        pkg_info['arch'] = self.config.get('pysrpm', 'arch')
-        pkg_info['sourcefile'] = source.name
+    def run(self):
+        """ Create the requested files: either spec, source RPM, and/or binary RPM """
+        self.load_configuration(self.root)
+        pkg_info = self.load_source_metadata(self.root, self.config.getboolean('pysrpm', 'extract_dependencies'))
 
         # Start by building the spec
         spec = self.make_spec(pkg_info)
@@ -340,10 +393,7 @@ class RPM:
 
         self._make_directories(spec_only)
 
-        spec_file = (
-            self.dest_dir if spec_only else self.rpm_base.joinpath('SPECS')
-        ).joinpath(f'{pkg_info["rpmname"]}.spec')
-
+        spec_file = (self.dest_dir if spec_only else self.rpm_base / 'SPECS') / f'{pkg_info["rpmname"]}.spec'
         with open(spec_file, 'w') as f:
             print(spec, file=f)
 
@@ -357,24 +407,29 @@ class RPM:
         source_rpm = pathlib.Path(binary_rpms[0].stem).with_suffix('.src.rpm')
 
         # Make a source distribution and copy to SOURCES directory with optional icon.
-        self._copy(source, self.rpm_base.joinpath('SOURCES', source.name))
+        if self.source is not None:
+            self._copy(self.source, self.rpm_base / 'SOURCES' / pkg_info['sourcefile'])
+        else:
+            # Unclear whether this is deprecated − it seems not, just the CLI
+            pep517.build.build(self.root, 'sdist', self.rpm_base / 'SOURCES', system=self.build_system)
 
         icon = self.config.get('pysrpm', 'icon', fallback=None)
         if icon:
             icon = pathlib.Path(icon)
             if not icon.exists():
                 raise FileNotFoundError(str(icon))
-            self._copy(self.icon, source.joinpath(self.icon.name))
+            self._copy(self.icon, self.rpm_base / 'SOURCES' / icon.name)
 
-        # build package: generate rpmbuild command and run it
+        # Construct the rpmbuild command
         rpm_cmd = ['rpmbuild', '-bs' if source_only else '-bb' if binary_only else '-ba',
                    '--define', f'_topdir {self.rpm_base.resolve()}',
-                   '--define', f'__python {self.config.get("pysrpm", "python")}',
+                   '--define', f'__python {self.templates["python"]}',
                    str(spec_file)]
 
         if not self.config.getboolean('pysrpm', 'keep_temp'):
             rpm_cmd.insert(-1, '--clean')
 
+        # Run rpmbuild
         try:
             subprocess.run(rpm_cmd, check=True, encoding='utf-8', capture_output=True)
         except subprocess.CalledProcessError as err:
@@ -386,17 +441,17 @@ class RPM:
 
         # Replace target files only if we don’t dry run − check files are generated in any case
         if not binary_only:
-            srpm = self.rpm_base.joinpath('SRPMS', source_rpm)
+            srpm = self.rpm_base / 'SRPMS' / source_rpm
             if not srpm.exists():
                 raise RPMBuildError('Expected source rpm not found')
             if not dry_run:
-                srpm.replace(self.dest_dir.joinpath(source_rpm.name))
+                srpm.replace(self.dest_dir / source_rpm.name)
 
         if not source_only:
-            if not any(self.rpm_base.joinpath('RPMS', rpm).exists() for rpm in binary_rpms):
+            if not any((self.rpm_base / 'RPMS' / rpm).exists() for rpm in binary_rpms):
                 raise RPMBuildError('No binary rpm found, expected at least one')
 
             for rpm in binary_rpms:
-                rpm = self.rpm_base.joinpath('RPMS', rpm)
+                rpm = self.rpm_base / 'RPMS' / rpm
                 if srpm.exists() and not dry_run:
-                    rpm.replace(self.dest_dir.joinpath(rpm.name))
+                    rpm.replace(self.dest_dir / rpm.name)

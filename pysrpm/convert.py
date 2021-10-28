@@ -62,7 +62,7 @@ def simplify_marker_to_rpm_condition(marker, environments, templates):
     Args:
         marker (:class:`~packaging.markers.Marker`): The marker to evaluate
         environments (`dict`): the possible environments, with keys are PEP508 environment markers, values are either
-                               a single value as a string, or a list of strings for possible values
+                               a single value as a string, or an iterable of strings for possible values
        templates (`dict`): templates to express python version (`python_abi`) and architecture (`python_arch`)
 
     Returns:
@@ -86,11 +86,11 @@ def simplify_marker_to_rpm_condition(marker, environments, templates):
         if env not in environments:
             return _single_marker_to_rpm_condition(marker, templates)
         evaluator = Marker(f'{marker[0].value} {marker[1].value} "{marker[2].value}"')
-        if type(environments[env]) is list:
-            evaluations = [evaluator.evaluate({env: val}) for val in environments[env]]
-        else:
+        if type(environments[env]) is str:
             evaluations = [evaluator.evaluate(environments)]
-        return (True if all(evaluations) else False if all(not(ev) for ev in evaluations) else True if env == 'extras'
+        else:
+            evaluations = [evaluator.evaluate({env: val}) for val in environments[env]]
+        return (True if all(evaluations) else False if all(not(ev) for ev in evaluations) else True if env == 'extra'
                 else _single_marker_to_rpm_condition(marker, templates))
 
     elif type(marker) is list:
