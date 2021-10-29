@@ -1,0 +1,40 @@
+[project]
+name = "package"
+version = "0.0.0"
+description = "A sample package"
+readme = "Hello world!"
+requires-python = ">=3.8"
+keywords = ["test", "hello world", "sample", "packaging"]
+author = "Cimbali <me@cimba.li>"
+authors = [
+  {email = "me@cimba.li"},
+  {name = "Cimbali"}
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python"
+]
+
+dependencies = [
+  "enum34; python_version < '3.4'",
+  "foobar; os_name != 'nt'",
+  "win32; os_name == 'nt'"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest ~= 5.0",
+]
+
+[project.urls]
+homepage = "https://sample-package.github.io"
+
+[project.scripts]
+package-cli = "package:main_cli"
+
+[project.gui-scripts]
+package-gui = "package:main_gui"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta:__legacy__"

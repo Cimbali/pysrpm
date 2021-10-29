@@ -1,5 +1,6 @@
 """ Utility functions to convert complex python dependency expressions to a format that is usable in RPM spec files """
 from packaging.markers import Marker
+import re
 
 _rpm_operator_correspondance = {
     '==': '=',
@@ -25,11 +26,11 @@ def _single_marker_to_rpm_condition(marker, templates):
     if marker[0].value == 'platform_machine':  # arch / uname -m
         arch_template = templates['python_arch']
         if operator == '==':
-            return 'if ' + arch_template.format(arch=version)
+            return 'with ' + arch_template.format(arch=version)
         elif operator == '!=':
             return 'without ' + arch_template.format(arch=version)
         elif operator == 'in':
-            return f'if ({" or ".join(arch_template.format(arch=arch) for arch in version.split())})'
+            return f'with ({" or ".join(arch_template.format(arch=arch) for arch in version.split())})'
         else:
             raise ValueError(f'Unsupported operator {operator} for platform_machine')
 
@@ -42,13 +43,13 @@ def _single_marker_to_rpm_condition(marker, templates):
 
     rpm_op = _rpm_operator_correspondance.get(operator)
     if rpm_op is not None:
-        return f'{package} {rpm_op} {version}'
+        return f'with {package} {rpm_op} {version}'
     elif operator == '~=':
-        return f'({package} >= {version} and {package} < {version}^next)'
+        return f'with ({package} >= {version} and {package} < {version}^next)'
     elif operator == '!=':
-        return f'({package} < {version} or {package} > {version})'
+        return f'with ({package} < {version} or {package} > {version})'
     elif operator == 'in':
-        return f'({" or ".join(f"{package} = {each_version}" for each_version in version.split())})'
+        return f'with ({" or ".join(f"{package} = {each_version}" for each_version in version.split())})'
     else:
         raise ValueError(f'Unsupported operator {operator} for dependency marker {marker}')
 
@@ -83,13 +84,17 @@ def simplify_marker_to_rpm_condition(marker, environments, templates):
 
     elif type(marker) is tuple:
         env = marker[0].value
-        if env not in environments:
+        if env == 'extra':
+            return marker[2].value in environments.get(env, [])
+        elif not environments.get(env):
             return _single_marker_to_rpm_condition(marker, templates)
+
         evaluator = Marker(f'{marker[0].value} {marker[1].value} "{marker[2].value}"')
         if type(environments[env]) is str:
             evaluations = [evaluator.evaluate(environments)]
         else:
             evaluations = [evaluator.evaluate({env: val}) for val in environments[env]]
+
         return (True if all(evaluations) else False if all(not(ev) for ev in evaluations) else True if env == 'extra'
                 else _single_marker_to_rpm_condition(marker, templates))
 
@@ -101,12 +106,14 @@ def simplify_marker_to_rpm_condition(marker, environments, templates):
                for before, last in zip([-1, *splits], [*splits, None])]
         dnf = [True if not cl else cl[0] if len(cl) == 1 else cl for cl in dnf if not any(ev is False for ev in cl)]
         return (False if not dnf else True if any(cl is True for cl in dnf)
-                else ' and '.join(dnf[0]) if len(dnf) == 1
-                else '(' + ' or '.join(' and '.join(mk) if type(mk) is list else mk for mk in dnf) + ')')
+                else ' '.join(dnf[0]) if len(dnf) == 1 and type(dnf[0]) is list else dnf[0] if len(dnf) == 1
+                else '(' + ' or '.join(' '.join(mk) if type(mk) is list else mk for mk in dnf) + ')')
 
 
 def specifier_to_rpm_version(package, version):
     """ Compute the version-specified dependency of a package to a RPM version requirement
+
+    The input is a PEP440 version specifier: https://www.python.org/dev/peps/pep-0440/#version-specifiers
 
     Args:
         package (`str`): A string that is the python package on which to depend
@@ -123,9 +130,11 @@ def specifier_to_rpm_version(package, version):
             rpm_specs.append(f'{package} {rpm_op} {version}')
         elif spec.operator == '~=':
             # Caret forces higher sorting (tilde lower)
-            rpm_specs.extend([f'{package} >= {version}', f'{package} < {version}^zzz'])
+            bits = re.sub(r'(.?[abc][0-9]*)?(.[a-z]+[0-9]*)?$', '', version).split('.')
+            rpm_specs.extend([f'{package} >= {version}',
+                              f'{package} < {".".join([*bits[:-2], str(int(bits[-2]) + 1)])}'])
         elif spec.operator == '!=':
-            rpm_specs.append(f'({package} < {version} or {package} > {version})')
+            rpm_specs.append(f'{package} < {version} or {package} > {version}')
 
     if rpm_specs:
         return ', '.join(rpm_specs)

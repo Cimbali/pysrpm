@@ -103,27 +103,26 @@ class RPM:
     def __exit__(self, exc_type, exc_value, traceback):
         """ Cleanup any temporary directories and files we extracted """
         if not self.config.getboolean('pysrpm', 'keep_temp') and not self.config.getboolean('pysrpm', 'spec_only'):
-            shutil.rmtree(self.rpm_base)
+            try:
+                shutil.rmtree(self.rpm_base, ignore_errors=True)
+            except AttributeError:
+                pass  # Early exit? load_configuration() did not finish
 
         try:
             shutil.rmtree(self.tempdir)
         except AttributeError:
-            pass
+            pass  # We did not have to create a temporary directory
 
 
-    def load_configuration(self, rootdir):
-        """ Configure the RPM building, loading the various configurations in order
-
-        Args:
-            rootdir (:class:`~pathlib.Path`): Path to the directory containing the source distribution of the package
-        """
+    def load_configuration(self):
+        """ Configure the RPM building, loading the various configurations in order """
         # Load any config file, specified or from the package
         if self.config_file is not None:
             self.load_user_config(self.config_file)
-        elif rootdir.joinpath('pyproject.toml').exists():
-            self.load_user_config(rootdir / 'pyproject.toml')
-        elif rootdir.joinpath('setup.cfg').exists():
-            self.load_user_config(rootdir / 'setup.cfg')
+        elif self.root.joinpath('pyproject.toml').exists():
+            self.load_user_config(self.root / 'pyproject.toml')
+        elif self.root.joinpath('setup.cfg').exists():
+            self.load_user_config(self.root / 'setup.cfg')
 
         if self.config.has_section('__templates__'):
             raise ValueError('The section name "__templates__" is reserved, do not use it in your configuration files')
@@ -150,6 +149,9 @@ class RPM:
 
         self.templates = dict(self.config.items('__templates__'))
         self.templates['optional_keys'] = set(self.templates['optional_keys'].split())
+
+        env_markers = (line.split(':', 1) for line in self.templates['environment_markers'].strip().split('\n'))
+        self.environments = {key.strip(): val.strip() for key, val in env_markers}
 
         # Extract additional files if required to get the package metadata
         if self.config.getboolean('pysrpm', 'extract_dependencies'):
@@ -264,8 +266,7 @@ class RPM:
             `list`: A list of string representations for the package dependency with versions
         """
         rpm_reqs = []
-        env_markers = (line.split(':') for line in self.templates['environment_markers'].strip().split('\n'))
-        environments = {'extra': extras, **{key.strip(): val.strip() for key, val in env_markers}}
+        environments = {**self.environments, 'extra': extras}
         for req in (Requirement(req) for req in reqs):
             condition = simplify_marker_to_rpm_condition(req.marker, environments, self.templates)
             if condition is False:
@@ -277,7 +278,7 @@ class RPM:
             if condition is True:
                 rpm_reqs.append(versioned_package)
             else:
-                rpm_reqs.append(f'({versioned_package} {condition})')
+                rpm_reqs.append(f'{versioned_package} {condition}')
 
         return rpm_reqs
 
@@ -296,15 +297,12 @@ class RPM:
         successful_lines = []
         for line in template.split('\n'):
             try:
-                line = line.format(**kwargs)
+                successful_lines.append(line.format(**kwargs))
             except KeyError as err:
                 if not set(err.args) <= self.templates['optional_keys']:
-                    raise
-            except ValueError:
-                print('Error formatting line:', line, file=sys.stderr)
-                raise
-            else:
-                successful_lines.append(line)
+                    raise KeyError(f'Missing template key(s) {", ".join(err.args)}') from err
+            except ValueError as err:
+                raise ValueError(f'Error formatting line: {line}') from err
         return successful_lines
 
 
@@ -337,14 +335,14 @@ class RPM:
         if python_version:
             required.append(specifier_to_rpm_version('python(abi)', SpecifierSet(python_version)))
         if required:
-            spec.append('Requires: ' + ', '.join(required))
+            spec.extend(f'Requires: {req}' for req in required)
 
         # Generate optional dependencies
         optional = self.templates['suggests'].replace('\n', ' ')
         optional = ([optional] if optional else []) + self.convert_python_req(deps, suggests_extras)
         opt_key = self.templates['optional_dependency_tag']
         if opt_key and set(optional) - set(required):
-            spec.append(f'{opt_key}: ' + ', '.join(req for req in optional if req not in required))
+            spec.extend(f'{opt_key}: {req}' for req in required if req not in required)
 
         # Generate the rest of the file
         sections = self.config.options('base')
@@ -375,16 +373,18 @@ class RPM:
 
     def run(self):
         """ Create the requested files: either spec, source RPM, and/or binary RPM """
-        self.load_configuration(self.root)
+        self.load_configuration()
         pkg_info = self.load_source_metadata(self.root, self.config.getboolean('pysrpm', 'extract_dependencies'))
 
         # Start by building the spec
         spec = self.make_spec(pkg_info)
 
         dry_run = self.config.getboolean('pysrpm', 'dry_run')
+        # Priority of options: if spec_only is set the other 2 are ignored,
+        # if binary_only then source_only (which is set by default) is ignored
         spec_only = self.config.getboolean('pysrpm', 'spec_only')
-        source_only = self.config.getboolean('pysrpm', 'source_only')
         binary_only = self.config.getboolean('pysrpm', 'binary_only')
+        source_only = self.config.getboolean('pysrpm', 'source_only')
 
         if spec_only and dry_run:
             print(spec)
@@ -402,7 +402,7 @@ class RPM:
 
         # Determine the binary and source rpm names that should be built out of this spec file
         query = [*r'rpm -q --qf %{arch}/%{name}-%{version}-%{release}.%{arch}.rpm\n --specfile'.split(), str(spec_file)]
-        query_output = subprocess.run(query, capture_output=True, check=True).stdout.decode('utf-8')
+        query_output = subprocess.run(query, capture_output=True, encoding='utf-8', check=True).stdout
         binary_rpms = [pathlib.Path(out) for out in query_output.strip().split('\n')]
         source_rpm = pathlib.Path(binary_rpms[0].stem).with_suffix('.src.rpm')
 
@@ -421,7 +421,7 @@ class RPM:
             self._copy(self.icon, self.rpm_base / 'SOURCES' / icon.name)
 
         # Construct the rpmbuild command
-        rpm_cmd = ['rpmbuild', '-bs' if source_only else '-bb' if binary_only else '-ba',
+        rpm_cmd = ['rpmbuild', '-bb' if binary_only else '-bs' if source_only else '-ba',
                    '--define', f'_topdir {self.rpm_base.resolve()}',
                    '--define', f'__python {self.templates["python"]}',
                    str(spec_file)]
@@ -437,7 +437,7 @@ class RPM:
                 arg if ' ' not in arg else f"'{arg}'" if "'" not in arg else f'"{arg}"' for arg in rpm_cmd
             ), file=sys.stderr)
             print(err.stderr, file=sys.stderr)
-            return RPMBuildError('command failed: ' + err.stderr.split('\n', 1)[0])
+            raise RPMBuildError('rpmbuild command failed') from err
 
         # Replace target files only if we don’t dry run − check files are generated in any case
         if not binary_only:
@@ -448,12 +448,12 @@ class RPM:
                 srpm.replace(self.dest_dir / source_rpm.name)
                 print(self.dest_dir / source_rpm.name)
 
-        if not source_only:
+        if binary_only or not source_only:
             if not any((self.rpm_base / 'RPMS' / rpm).exists() for rpm in binary_rpms):
                 raise RPMBuildError('No binary rpm found, expected at least one')
 
             for rpm in binary_rpms:
                 rpm = self.rpm_base / 'RPMS' / rpm
-                if srpm.exists() and not dry_run:
+                if rpm.exists() and not dry_run:
                     rpm.replace(self.dest_dir / rpm.name)
                     print(self.dest_dir / rpm.name)
