@@ -1,5 +1,6 @@
 """ Main module containing :class:`~RPM`, the package-to-spec (or RPM) converter """
 import os
+import re
 import sys
 import tomli
 import email
@@ -247,7 +248,7 @@ class RPM:
 
         return {
             **metadata,
-            'rpmname': self.templates['package_prefix'] + metadata['name'],
+            'rpmname': self.templates['package_prefix'] + re.sub('[._-]+', '-', metadata['name'].lower()),
             'rpmversion': metadata['version'].replace('-', '_'),
             'release': self.config.get('pysrpm', 'release'),
             'arch': self.templates['arch'],
