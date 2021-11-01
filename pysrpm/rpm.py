@@ -10,6 +10,7 @@ import pathlib
 import fnmatch
 import tempfile
 import subprocess
+import contextlib
 import configparser
 import pep517.meta
 import pep517.build
@@ -41,8 +42,8 @@ class RPM:
         """
         self.config = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolation(),
                                                 dict_type=OrderedDict)
-        with importlib_resources.path('pysrpm', 'presets') as defaults_path:
-            self.config.read(sorted(defaults_path.glob('*.conf')))
+        with self.preset_configs() as config_lists:
+            self.config.read(config_lists)
 
         self.config_file = config
         self.cli_args = cli_args
@@ -51,6 +52,14 @@ class RPM:
             raise FileNotFoundError(str(source))
         self.root = source if source.is_dir() else None
         self.source = source if source.is_file() else None
+
+
+    @staticmethod
+    @contextlib.contextmanager
+    def preset_configs():
+        """ Context manager that ensures the preset configurations are in a directory, and yields the sorted list """
+        with importlib_resources.path('pysrpm', 'presets') as defaults_path:
+            yield sorted(defaults_path.glob('*.conf'))
 
 
     def __enter__(self):

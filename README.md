@@ -46,6 +46,8 @@ post =
 ```
 See [`presets/00-base.conf`](pysrpm/presets/00-base.conf) for an explanation of available parameters.
 
+Currently there are no other presents than the `base` template, but specialisations can be added if needed, for example for platforms that are stuck on older rpm versions.
+
 ### Escaping characters
 To make templates extendable, interpolation is used. This means some characters need to be protected (by doubling them) if they aren’t meant as interpolation.
 
