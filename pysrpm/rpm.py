@@ -130,9 +130,9 @@ class RPM:
         if self.config_file is not None:
             self.load_user_config(self.config_file)
         elif self.root.joinpath('pyproject.toml').exists():
-            self.load_user_config(self.root / 'pyproject.toml')
+            self.load_user_config(self.root / 'pyproject.toml', from_project=True)
         elif self.root.joinpath('setup.cfg').exists():
-            self.load_user_config(self.root / 'setup.cfg')
+            self.load_user_config(self.root / 'setup.cfg', from_project=True)
 
         if self.config.has_section('__templates__'):
             raise ValueError('The section name "__templates__" is reserved, do not use it in your configuration files')
@@ -168,11 +168,12 @@ class RPM:
             self.full_extraction()
 
 
-    def load_user_config(self, path):
+    def load_user_config(self, path, from_project=False):
         """ Load a config file into the RPM’s configparser, only evaluating interpolations in our own config parser
 
         Args:
             path (`str` or path-like): Path to a configuration file to load
+            from_project (`bool`): Whether the config file is obtained from the project source
 
         Returns:
             `dict` or `None`: A dictionary of section name to section template
@@ -183,7 +184,7 @@ class RPM:
             # Move anything directy under 'pysrpm' into a nested table
             config['pysrpm'] = {key: config.pop(key) for key, value in config.copy().items() if type(value) is not dict}
         else:
-            parser = configparser.ConfigParser()
+            parser = configparser.ConfigParser() if from_project else configparser.RawConfigParser()
             parser.read(path)
             prefix = 'pysrpm.' if any(section.startswith('pysrpm.') for section in parser.sections()) else ''
             config = {cfgsec.replace(prefix, ''): dict(parser.items(cfgsec)) for cfgsec in parser.sections()

@@ -55,7 +55,7 @@ Up to 3 levels of expansion can happen:
 - templates are evaluating as python, which requires escaping any `{` and `}`
 - this project uses configparser `ExtendedInterpolation` notation, i.e. `${key}` or `${section:key}`, which requires escaping `$`
 - RPM uses `%{macro}` for its macros, which requires escaping `%`
-- `setup.cfg` uses configparser `BasicInterpolation` notation, i.e. `%(key)s` interpolation, which requires escaping `%` if using `setup.cfg`
+- `setup.cfg` uses configparser `BasicInterpolation` notation, i.e. `%(key)s` interpolation, which requires escaping `%` if using the project’s `setup.cfg`
 - `pyproject.toml` has backslahes for double quotes in double-quoted strings, which requires escaping `\` if using double-quoted strings in toml
 
 Here are a couple of examples:
