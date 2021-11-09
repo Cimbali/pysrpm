@@ -13,8 +13,11 @@ def list_flavours(context, option, value):
     Args:
         context (:class:`~click.Context`): The click context
         option (:class:`~click.Option`): The list-flavours flag
-        value (`bool`): The list-flavours flag’s option, always `True`
+        value (`bool`): The list-flavours flag’s option, `True` iff the flag is present
     """
+    if not value:
+        return
+
     config = configparser.RawConfigParser(dict_type=collections.OrderedDict)
     with RPM.preset_configs() as presets_list:
         config.read(presets_list)
