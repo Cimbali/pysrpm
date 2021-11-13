@@ -78,7 +78,8 @@ class RPM:
         self.tempdir = pathlib.Path(tempfile.mkdtemp())
         with tarfile.open(self.source) as tf:
             for name in tf.getnames():
-                if any(fnmatch.fnmatch(name, pat) for pat in ['*/pyproject.toml', '*/PKG-INFO', '*/setup.cfg']):
+                if any(fnmatch.fnmatch(name, pat) for pat in ['*/pyproject.toml', '*/PKG-INFO', '*/setup.cfg',
+                                                              '*/setup.py']):
                     tf.extract(name, self.tempdir)
         try:
             self.root = next(self.tempdir.glob('*/PKG-INFO')).parent
@@ -234,15 +235,18 @@ class RPM:
             'requires': ['setuptools>=40.8.0', 'wheel'],
             'build-backend': 'setuptools.build_meta:__legacy__',
         }
+        metadata = {
+            'build-requires': self.build_system['requires'],
+            'long-description': dist_meta.get_payload().replace('%', '%%'),
+        }
+
         if pyproject.exists():
             with open(pyproject, 'rb') as f:
                 self.build_system.update(tomli.load(f)['build-system'])
-
-        metadata = {
-            'build-requires': self.build_system['requires'],
-            'build-backend': self.build_system['build-backend'],
-            'long-description': dist_meta.get_payload().replace('%', '%%'),
-        }
+                metadata['build-requires'] = self.build_system.get('build-requires', metadata['build-requires'])
+        # If running setup.py, we don’t need setuptools to be >= 40.8.0 as it is required for pyproject.toml:
+        elif (root / 'setup.py').exists():
+            metadata['build-requires'] = ['setuptools', 'wheel']
 
         # See https://packaging.python.org/specifications/core-metadata/
         multiple_use = {'Dynamic', 'Platform', 'Supported-Platform', 'Classifier', 'Requires-Dist',
