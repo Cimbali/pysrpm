@@ -413,7 +413,14 @@ class RPM:
 
         # Determine the binary and source rpm names that should be built out of this spec file
         query = [*r'rpm -q --qf %{arch}/%{name}-%{version}-%{release}.%{arch}.rpm\n --specfile'.split(), str(spec_file)]
-        query_output = subprocess.run(query, capture_output=True, encoding='utf-8', check=True).stdout
+        try:
+            query_output = subprocess.run(query, capture_output=True, encoding='utf-8', check=True).stdout
+        except subprocess.CalledProcessError as err:
+            print(f'ERROR The command returned {err.returncode}:', ' '.join(
+                arg if ' ' not in arg else f"'{arg}'" if "'" not in arg else f'"{arg}"' for arg in query
+            ), file=sys.stderr)
+            print(err.stderr, file=sys.stderr)
+            raise RPMBuildError('rpm querying of specfile failed') from err
         binary_rpms = [pathlib.Path(out) for out in query_output.strip().split('\n')]
         source_rpm = pathlib.Path(binary_rpms[0].stem).with_suffix('.src.rpm')
 
