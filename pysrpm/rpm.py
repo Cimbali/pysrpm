@@ -75,13 +75,13 @@ class RPM:
         if '.tar' not in self.source.suffixes[-2:]:
             raise ValueError('Expected tarball as source file')
 
-        self.tempdir = tempfile.mkdtemp()
+        self.tempdir = pathlib.Path(tempfile.mkdtemp())
         with tarfile.open(self.source) as tf:
             for name in tf.getnames():
                 if any(fnmatch.fnmatch(name, pat) for pat in ['*/pyproject.toml', '*/PKG-INFO', '*/setup.cfg']):
                     tf.extract(name, self.tempdir)
         try:
-            self.root = next(pathlib.Path(self.tempdir).glob('*/PKG-INFO')).parent
+            self.root = next(self.tempdir.glob('*/PKG-INFO')).parent
         except StopIteration:
             raise ValueError('Malformed source file: can’t find metadata')
         return self
@@ -95,7 +95,7 @@ class RPM:
         with tarfile.open(self.source) as tf:
             # Only extract files that will resolve within the destination directory − also skip existing files
             tempdir = self.tempdir.resolve()
-            safe_members = [name for name, dest in ((name, (tempdir / name).resolve()) for name in tf.getnames())
+            safe_members = [info for info, dest in ((info, (tempdir / info.name).resolve()) for info in tf.getmembers())
                             if dest.parts[:len(tempdir.parts)] == tempdir.parts and not dest.exists()]
             tf.extractall(self.tempdir, safe_members)
 
