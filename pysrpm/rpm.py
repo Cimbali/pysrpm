@@ -241,7 +241,7 @@ class RPM:
         metadata = {
             'build-requires': self.build_system['requires'],
             'build-backend': self.build_system['build-backend'],
-            'long-description': dist_meta.get_payload(),
+            'long-description': dist_meta.get_payload().replace('%', '%%'),
         }
 
         # See https://packaging.python.org/specifications/core-metadata/
@@ -252,9 +252,9 @@ class RPM:
             if key == 'Content-Type':
                 continue
             elif key in multiple_use:
-                metadata.setdefault(key.lower(), []).append(value)
+                metadata.setdefault(key.lower(), []).append(value.replace('%', '%%'))
             else:
-                metadata[key.lower()] = value
+                metadata[key.lower()] = value.replace('%', '%%')
 
         return {
             **metadata,
