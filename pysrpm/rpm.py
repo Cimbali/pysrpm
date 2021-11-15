@@ -23,6 +23,11 @@ try:
 except ImportError:
     import importlib_resources
 
+try:
+    import importlib.metadata as importlib_metadata
+except ImportError:
+    import importlib_metadata
+
 from pysrpm.convert import specifier_to_rpm_version, simplify_marker_to_rpm_condition
 
 
@@ -79,7 +84,7 @@ class RPM:
         with tarfile.open(self.source) as tf:
             for name in tf.getnames():
                 if any(fnmatch.fnmatch(name, pat) for pat in ['*/pyproject.toml', '*/PKG-INFO', '*/setup.cfg',
-                                                              '*/setup.py']):
+                                                              '*/setup.py', '*/entry_points.txt']):
                     tf.extract(name, self.tempdir)
         try:
             self.root = next(self.tempdir.glob('*/PKG-INFO')).parent
@@ -223,12 +228,23 @@ class RPM:
 
         if with_deps or not pkg_info.exists():
             self.full_extraction()  # May be needed?
-            dist_meta = pep517.meta.load(root).metadata
+            dist = pep517.meta.load(root)
+            dist_meta = dist.metadata
+            entry_points = dist.entry_points
         else:
             # Metadata from importlib.metadata is an email.Message, so do the same here
             with open(pkg_info, 'rb') as f:
                 dist_meta = email.message_from_binary_file(f)
             dist_meta.set_param('charset', 'utf8')
+
+            # May not exist, only when egg-info is built (wheels, setuptools develop installs…)
+            ep_parser = configparser.ConfigParser()
+            try:
+                ep_parser.read_file([str(root / 'entry_points.txt')])
+            except configparser.MissingSectionHeaderError:
+                pass
+            entry_points = [importlib_metadata.EntryPoint(key, value, sec) for sec in ep_parser.sections()
+                            for key, value in parser.items(sec)]
 
         pyproject = root / 'pyproject.toml'
         self.build_system = {
@@ -239,6 +255,24 @@ class RPM:
             'build-requires': self.build_system['requires'],
             'long-description': dist_meta.get_payload().replace('%', '%%'),
         }
+
+        enabled_entry_points = []
+        disabled_entry_points = []
+        extra_patterns = self.templates['requires_extras'].split() + self.templates['suggests_extras'].split()
+        for ep in entry_points:
+            extras = re.match(r'.* \[(.+)\]$', ep.value.strip())
+            for extra in ((extra.strip() for extra in extras.group(1).split(',')) if extras else []):
+                if not any(fnmatch.fnmatch(extra, pattern) for pattern in extra_patterns):
+                    # A specified extra on the entry point is not matching any of the extras included in the package
+                    disabled_entry_points.append(f'"{ep.name}"' if ' ' in ep.name else ep.name)
+                    break
+            else:
+                enabled_entry_points.append(f'"{ep.name}"' if ' ' in ep.name else ep.name)
+
+        if enabled_entry_points:
+            metadata['entry-points'] = ' '.join(enabled_entry_points)
+        if disabled_entry_points:
+            metadata['disabled-entry-points'] = ' '.join(disabled_entry_points)
 
         if pyproject.exists():
             with open(pyproject, 'rb') as f:
