@@ -283,16 +283,16 @@ class RPM:
             metadata['build-requires'] = ['setuptools', 'wheel']
 
         # See https://packaging.python.org/specifications/core-metadata/
-        multiple_use = {'Dynamic', 'Platform', 'Supported-Platform', 'Classifier', 'Requires-Dist',
-                        'Requires-External', 'Project-URL', 'Provides-Extra', 'Provides-Dist', 'Obsoletes-Dist'}
+        multiple_use = {'dynamic', 'platform', 'supported-platform', 'classifier', 'requires-dist',
+                        'requires-external', 'project-url', 'provides-extra', 'provides-dist', 'obsoletes-dist'}
 
-        for key, value in dist_meta.items():
-            if key == 'Content-Type':
+        for key, value in ((key.lower(), value.replace('%', '%%')) for key, value in dist_meta.items()):
+            if key == 'content-type':
                 continue
             elif key in multiple_use:
-                metadata.setdefault(key.lower(), []).append(value.replace('%', '%%'))
+                metadata.setdefault(key, []).append(value)
             else:
-                metadata[key.lower()] = value.replace('%', '%%')
+                metadata[key] = f'{metadata[key]} {value}' if key in metadata else value
 
         return {
             **metadata,
