@@ -32,7 +32,7 @@ def list_flavours(context, option, value):
 
 @click.command(help='Convert a python source package to RPM')
 @click.argument('source', type=click.Path(exists=True), nargs=1)
-@click.option('--flavour', help='RPM targets a specific linux flavour', type=str, default='base')
+@click.option('--flavour', help='RPM targets a specific linux flavour', type=str, default=None)
 @click.option('--config', help='Specify a config file manually, replaces any configuration from within the package',
               type=click.Path(exists=True, dir_okay=False))
 @click.option('--list-flavours', help='List the possible flavours', is_flag=True, callback=list_flavours)
