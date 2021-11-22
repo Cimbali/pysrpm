@@ -40,6 +40,7 @@ Requires-Dist: pytest (~=5.0) ; extra == 'test'
 
 Hello world from a sample package?
 ''')
+dist.entry_points = []
 
 pysrpm.rpm.pep517.meta.load = unittest.mock.Mock()
 pysrpm.rpm.pep517.meta.load.return_value = dist
