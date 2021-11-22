@@ -132,6 +132,7 @@ class RPM:
 
     def load_configuration(self):
         """ Configure the RPM building, loading the various configurations in order """
+        options = self.config.options('pysrpm')
         # Load any config file, specified or from the package
         if self.config_file is not None:
             self.load_user_config(self.config_file)
@@ -143,10 +144,16 @@ class RPM:
         if self.config.has_section('__templates__'):
             raise ValueError('The section name "__templates__" is reserved, do not use it in your configuration files')
 
+        self.config.add_section('__templates__')
+        for opt, arg in self.config.items('pysrpm')[:]:
+            if opt not in options:
+                self.config.remove_option('pysrpm', opt)
+                self.config.set('__templates__', opt, arg)
+
         # Load CLI last as it needs to override previous options.
         self.config.read_dict({
-            'pysrpm': dict(tup for tup in self.cli_args.items() if self.config.has_option('pysrpm', tup[0])),
-            '__templates__': dict(tup for tup in self.cli_args.items() if not self.config.has_option('pysrpm', tup[0])),
+            'pysrpm': {opt: arg for opt, arg in self.cli_args.items() if opt in options},
+            '__templates__': {opt: arg for opt, arg in self.cli_args.items() if opt not in options},
         }, source='CLI')
 
         # Set config params from loaded config
