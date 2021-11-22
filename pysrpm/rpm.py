@@ -287,7 +287,7 @@ class RPM:
                 metadata['build-requires'] = self.build_system.get('build-requires', metadata['build-requires'])
         # If running setup.py, we don’t need setuptools to be >= 40.8.0 as it is required for pyproject.toml:
         elif (root / 'setup.py').exists():
-            metadata['build-requires'] = ['setuptools', 'wheel']
+            metadata['build-requires'] = ['setuptools']
 
         # See https://packaging.python.org/specifications/core-metadata/
         multiple_use = {'dynamic', 'platform', 'supported-platform', 'classifier', 'requires-dist',
@@ -311,7 +311,7 @@ class RPM:
         }
 
 
-    def convert_python_req(self, reqs, extras=[]):
+    def convert_python_req(self, reqs, extras=[], python_package=None):
         """ Compute the version-specified dependency list for a package
 
         Args:
@@ -328,7 +328,7 @@ class RPM:
             if condition is False:
                 continue
 
-            package = self.templates['python_package'].format(name=req.name)
+            package = (python_package or self.templates['python_package']).format(name=req.name)
             versioned_package = specifier_to_rpm_version(package, req.specifier)
 
             if condition is True:
@@ -372,7 +372,9 @@ class RPM:
             `str`: the contents of the spec file
         """
         spec = self._format_lines(self.templates['preamble'].lstrip('\n'), **pkg_info)
-        spec.append('BuildRequires: ' + ', '.join(self.convert_python_req(pkg_info['build-requires'])))
+        # In BuildRequires, python3 is not yet installed, ensure we do not need its version macro
+        spec.append('BuildRequires: ' + ', '.join(self.convert_python_req(pkg_info['build-requires'],
+                                                                          python_package='python3-{name}')))
 
         # Handle automatically extracting dependencies
         extract_deps = self.config.getboolean('pysrpm', 'extract_dependencies')
