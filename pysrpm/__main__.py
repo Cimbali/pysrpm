@@ -45,8 +45,6 @@ def list_flavours(context, option, value):
 @click.option('--binary-only/--no-binary-only', help='Only build binary RPM file(s)', default=None)
 @click.option('--keep-temp/--no-keep-temp', help='Do not remove temporary files in the build hierarchy', default=None)
 @click.option('--dry-run/--no-dry-run', help='Do not replace target files even if building RPMs succeed', default=None)
-@click.option('--python', help='Set the name of the python executable the RPM should use during build', type=str)
-@click.option('--package-prefix', help='Prefix to the package name, e.g. python3-', type=str)
 @click.option('--icon', help='An icon to copy to the source build dir', type=click.Path(exists=True, dir_okay=False))
 @click.option('--optional-dependency-tag', help='', type=str)
 @click.option('--requires', help='RPM packages on which to depend', type=str)

@@ -9,6 +9,7 @@ import pathlib
 TEMPLATES = {
     'python_abi': 'python(abi)',
     'python_arch': 'python({arch})',
+    'python_dist': 'python-{name}',
     'python_package': 'python-{name}',
 }
 

@@ -303,7 +303,7 @@ class RPM:
 
         return {
             **metadata,
-            'rpmname': self.templates['package_prefix'] + re.sub('[._-]+', '-', metadata['name'].lower()),
+            'rpmname': self.templates['python_package'].format(name=re.sub('[._-]+', '-', metadata['name'].lower())),
             'rpmversion': metadata['version'].replace('-', '_'),
             'release': self.config.get('pysrpm', 'release'),
             'arch': self.templates['arch'],
@@ -311,11 +311,12 @@ class RPM:
         }
 
 
-    def convert_python_req(self, reqs, extras=[], python_package=None):
+    def convert_python_req(self, reqs, extras=[], package_template='python_dist'):
         """ Compute the version-specified dependency list for a package
 
         Args:
             reqs (`list` of `str`): The string representations of python dependencies
+            package_template (`str`): The name of the template to format package names
             extras (`list` of `str`): the list of extras to incldue in the requirement, to evaluate requirement markers
 
         Returns:
@@ -328,7 +329,7 @@ class RPM:
             if condition is False:
                 continue
 
-            package = (python_package or self.templates['python_package']).format(name=req.name)
+            package = self.templates[package_template].format(name=req.name)
             versioned_package = specifier_to_rpm_version(package, req.specifier)
 
             if condition is True:
@@ -372,9 +373,10 @@ class RPM:
             `str`: the contents of the spec file
         """
         spec = self._format_lines(self.templates['preamble'].lstrip('\n'), **pkg_info)
-        # In BuildRequires, python3 is not yet installed, ensure we do not need its version macro
+        # In BuildRequires, python3 is not yet installed, ensure we do not need its version macro by using a template
+        # that is not python-version dependent (as python_dist is). RPM should figure out what to do regardless.
         spec.append('BuildRequires: ' + ', '.join(self.convert_python_req(pkg_info['build-requires'],
-                                                                          python_package='python3-{name}')))
+                                                                          package_template='python_package')))
 
         # Handle automatically extracting dependencies
         extract_deps = self.config.getboolean('pysrpm', 'extract_dependencies')
