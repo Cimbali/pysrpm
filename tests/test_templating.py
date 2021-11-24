@@ -26,35 +26,35 @@ def get_specfile(tag=None, **options):
 
 def test_template_specialisation():
     # Default
-    assert get_specfile('Provides') == ['python%{python3_version}dist(package)']
+    assert get_specfile('Provides') == ['python%{python3_version}dist(package) = 0.0.0']
 
     # CLI / kwargs override
-    assert get_specfile('Provides', python_package='python-{name}') == ['python-package']
+    assert get_specfile('Provides', python_dist='python-{name}') == ['python-package = 0.0.0']
 
     # Try from a config file with an inherited flavour
     cfg = pathlib.Path('test.config')
     with open(cfg, 'w') as f:
-        print('[pysrpm]\nflavour=test\n[test]\npython_package=python-{name}', file=f)
+        print('[pysrpm]\nflavour=test\n[test]\npython_dist=python-{name}', file=f)
 
     try:
-        assert get_specfile('Provides', config=cfg) == ['python-package']
+        assert get_specfile('Provides', config=cfg) == ['python-package = 0.0.0']
     finally:
         cfg.unlink()
 
     # Add pysrpm. to config section
     with open(cfg, 'w') as f:
-        print('[pysrpm]\nflavour=test\n[pysrpm.test]\npython_package=python-{name}', file=f)
+        print('[pysrpm]\nflavour=test\n[pysrpm.test]\npython_dist=python-{name}', file=f)
 
     try:
-        assert get_specfile('Provides', config=cfg) == ['python-package']
+        assert get_specfile('Provides', config=cfg) == ['python-package = 0.0.0']
     finally:
         cfg.unlink()
 
     # Try from a TOML config file
     cfg = pathlib.Path('test.toml')
     with open(cfg, 'w') as f:
-        print('''[tool.pysrpm]\nflavour = 'test'\n[tool.pysrpm.test]\npython_package = "python-{name}"''', file=f)
+        print('''[tool.pysrpm]\nflavour = 'test'\n[tool.pysrpm.test]\npython_dist = "python-{name}"''', file=f)
     try:
-        assert get_specfile('Provides', config=cfg) == ['python-package']
+        assert get_specfile('Provides', config=cfg) == ['python-package = 0.0.0']
     finally:
         cfg.unlink()

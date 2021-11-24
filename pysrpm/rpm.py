@@ -28,7 +28,7 @@ try:
 except ImportError:
     import importlib_metadata
 
-from pysrpm.convert import specifier_to_rpm_version, simplify_marker_to_rpm_condition
+from pysrpm.convert import specifier_to_rpm_version, simplify_marker_to_rpm_condition, python_version_to_rpm_version
 
 
 class RPMBuildError(Exception):
@@ -301,13 +301,15 @@ class RPM:
             else:
                 metadata[key] = f'{metadata[key]} {value}' if key in metadata else value
 
+        epoch, rpmversion = python_version_to_rpm_version(metadata['version']).rpartition(':')[::2]
         return {
             **metadata,
             'rpmname': self.templates['python_package'].format(name=re.sub('[._-]+', '-', metadata['name'].lower())),
-            'rpmversion': metadata['version'].replace('-', '_'),
+            'rpmversion': rpmversion,
             'release': self.config.get('pysrpm', 'release'),
             'arch': self.templates['arch'],
             'sourcefile': self.templates['source_name'].format(**metadata),
+            **({'epoch': epoch} if epoch != '' else {}),
         }
 
 

@@ -1,4 +1,5 @@
 """ Utility functions to convert complex python dependency expressions to a format that is usable in RPM spec files """
+from packaging.version import Version
 from packaging.markers import Marker
 import re
 
@@ -108,6 +109,18 @@ def simplify_marker_to_rpm_condition(marker, environments, templates):
         return (False if not dnf else True if any(cl is True for cl in dnf)
                 else ' '.join(dnf[0]) if len(dnf) == 1 and type(dnf[0]) is list else dnf[0] if len(dnf) == 1
                 else '(' + ' or '.join(' '.join(mk) if type(mk) is list else mk for mk in dnf) + ')')
+
+
+def python_version_to_rpm_version(verstring):
+    """ Convert a complex python version to an appropriate and similarly ordered RPM version """
+    version = Version(verstring)
+    return ''.join([
+        f'{version.epoch}:' if version.epoch else '', version.base_version,
+        '~{}{}'.format(*version.pre) if version.pre else '', f'^post{version.post}' if version.post is not None else '',
+        # The following 2 should likely not be used in RPM released python versions:
+        f'~a.dev{version.dev}' if version.dev is not None else '',  # a. prefix to sort before a / b / rc
+        f'^local.{version.local}' if version.local is not None else '',  # local. prefix to sort before post
+    ])
 
 
 def specifier_to_rpm_version(package, version):
