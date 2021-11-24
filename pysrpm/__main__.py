@@ -33,11 +33,11 @@ def list_flavours(context, option, value):
 @click.command(help='Convert a python source package to RPM')
 @click.argument('source', type=click.Path(exists=True), nargs=1)
 @click.option('--flavour', help='RPM targets a specific linux flavour', type=str, default=None)
-@click.option('--config', help='Specify a config file manually, replaces any configuration from within the package',
-              type=click.Path(exists=True, dir_okay=False))
+@click.option('--config', '-c', type=click.Path(exists=True, dir_okay=False),
+              help='Specify a config file manually, replaces any configuration from within the package')
 @click.option('--list-flavours', help='List the possible flavours', is_flag=True, callback=list_flavours)
 # Override options whose defaults are under [pysrpm] in defaults.conf, with "_" replaced by "-"
-@click.option('--release', help='Release of the RPM package', type=str)
+@click.option('--release', '-r', help='Release of the RPM package', type=str)
 @click.option('--rpm-base', help='Build directory', type=click.Path(exists=False, file_okay=False))
 @click.option('--dest-dir', help='Directory for final RPM or spec file', type=click.Path(exists=False, file_okay=False))
 @click.option('--spec-only/--no-spec-only', help='Only build spec file', default=None)
@@ -49,10 +49,11 @@ def list_flavours(context, option, value):
 @click.option('--optional-dependency-tag', help='', type=str)
 @click.option('--requires', help='RPM packages on which to depend', type=str)
 @click.option('--suggests', help='RPM packages to suggest', type=str)
-@click.option('--extract-dependencies/--no-extract-dependencies',
+@click.option('--no-extract-dependencies/--extract-dependencies',
               help='Automatically convert python dependencies to RPM package dependencies', default=None)
 @click.option('--requires-extras', help='Extras from python package to include as requires (if extracting)', type=str)
 @click.option('--suggests-extras', help='Extras from python package to include as suggests (if extracting)', type=str)
+@click.help_option('-h')
 def cli(source, **kwargs):
     """ Handle command line interface. Options passed on the command line override options from any config file.
 
