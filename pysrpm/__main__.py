@@ -32,35 +32,37 @@ def list_flavours(context, option, value):
 
 @click.command(help='Convert a python source package to RPM')
 @click.argument('source', type=click.Path(exists=True), nargs=1)
-@click.option('--flavour', help='RPM targets a specific linux flavour', type=str, default=None)
+@click.option('--flavour', '-f', help='RPM targets a specific linux flavour', type=str, default=None)
 @click.option('--config', '-c', type=click.Path(exists=True, dir_okay=False),
               help='Specify a config file manually, replaces any configuration from within the package')
 @click.option('--list-flavours', help='List the possible flavours', is_flag=True, callback=list_flavours)
 # Override options whose defaults are under [pysrpm] in defaults.conf, with "_" replaced by "-"
 @click.option('--release', '-r', help='Release of the RPM package', type=str)
 @click.option('--rpm-base', help='Build directory', type=click.Path(exists=False, file_okay=False))
-@click.option('--dest-dir', help='Directory for final RPM or spec file', type=click.Path(exists=False, file_okay=False))
-@click.option('--spec-only/--no-spec-only', help='Only build spec file', default=None)
-@click.option('--source-only/--no-source-only', help='Only build source RPM file', default=None)
-@click.option('--binary-only/--no-binary-only', help='Only build binary RPM file(s)', default=None)
-@click.option('--keep-temp/--no-keep-temp', help='Do not remove temporary files in the build hierarchy', default=None)
-@click.option('--dry-run/--no-dry-run', help='Do not replace target files even if building RPMs succeed', default=None)
-@click.option('--icon', help='An icon to copy to the source build dir', type=click.Path(exists=True, dir_okay=False))
-@click.option('--optional-dependency-tag', help='', type=str)
-@click.option('--requires', help='RPM packages on which to depend', type=str)
-@click.option('--suggests', help='RPM packages to suggest', type=str)
+@click.option('--dest-dir', '-d', type=click.Path(exists=False, file_okay=False),
+              help='Directory for final RPM or spec file')
+@click.option('--spec-only/--no-spec-only', '-s', help='Only build spec file', default=None)
+@click.option('--source-only/--no-source-only', help='Only build source RPM file (is the default)', default=None)
+@click.option('--binary-only/--no-binary-only', '-b', help='Only build binary RPM file(s)', default=None)
+@click.option('--keep-temp/--no-keep-temp', '-k', default=None,
+              help='Do not remove temporary files in the build hierarchy')
+@click.option('--dry-run/--no-dry-run', '-n', default=None,
+              help='Do not replace target files even if building RPMs succeed')
 @click.option('--no-extract-dependencies/--extract-dependencies',
               help='Automatically convert python dependencies to RPM package dependencies', default=None)
-@click.option('--requires-extras', help='Extras from python package to include as requires (if extracting)', type=str)
-@click.option('--suggests-extras', help='Extras from python package to include as suggests (if extracting)', type=str)
-@click.help_option('-h')
-def cli(source, **kwargs):
+@click.option('--template', '-t', 'templates', multiple=True, type=(str, str), metavar='<template-key> <value>',
+              help='Override a specific template (repeatable)')
+@click.help_option('--help', '-h')
+def cli(source, templates=[], **kwargs):
     """ Handle command line interface. Options passed on the command line override options from any config file.
 
     Args:
         source (:class:`~click.Path`): the source package to convert
+        templates (`list` of 2-`str`-tuples): the key / value pairs to define templates on the command line
     """
-    with RPM(source, **{option: value for option, value in kwargs.items() if value is not None}) as rpm_builder:
+    options = {option.replace('-', '_'): value for option, value in kwargs.items() if value is not None}
+    templates = {option.replace('-', '_'): value for option, value in templates}
+    with RPM(source, **options, cli_templates=templates) as rpm_builder:
         rpm_builder.run()
 
 

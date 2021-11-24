@@ -38,12 +38,13 @@ class RPMBuildError(Exception):
 
 class RPM:
     """ Given a python source distribution and a template config, build source, binary, or spec RPM files """
-    def __init__(self, source, config=None, **cli_args):
+    def __init__(self, source, config=None, templates={}, **options):
         """ Setup the various configurations and templates to start converting
 
         Args:
             source (`str` or path-like): Path to the source package to convert
             config (`str` or path-like): Path to a configuration file
+            templates (`dict`): CLI-specified template items
         """
         self.config = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolation(),
                                                 dict_type=OrderedDict)
@@ -51,7 +52,8 @@ class RPM:
             self.config.read(config_lists)
 
         self.config_file = config
-        self.cli_args = cli_args
+        self.cli_options = options
+        self.cli_templates = templates
         source = pathlib.Path(source)
         if not source.exists():
             raise FileNotFoundError(str(source))
@@ -152,8 +154,8 @@ class RPM:
 
         # Load CLI last as it needs to override previous options.
         self.config.read_dict({
-            'pysrpm': {opt: arg for opt, arg in self.cli_args.items() if opt in options},
-            '__templates__': {opt: arg for opt, arg in self.cli_args.items() if opt not in options},
+            'pysrpm': {opt: arg for opt, arg in self.cli_options.items()},
+            '__templates__': {opt: arg for opt, arg in self.cli_templates.items()},
         }, source='CLI')
 
         # Set config params from loaded config

@@ -29,7 +29,7 @@ def test_template_specialisation():
     assert get_specfile('Provides') == ['python%{python3_version}dist(package) = 0.0.0']
 
     # CLI / kwargs override
-    assert get_specfile('Provides', python_dist='python-{name}') == ['python-package = 0.0.0']
+    assert get_specfile('Provides', templates=dict(python_dist='python-{name}')) == ['python-package = 0.0.0']
 
     # Try from a config file with an inherited flavour
     cfg = pathlib.Path('test.config')
