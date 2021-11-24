@@ -251,7 +251,7 @@ class RPM:
             except configparser.MissingSectionHeaderError:
                 pass
             entry_points = [importlib_metadata.EntryPoint(key, value, sec) for sec in ep_parser.sections()
-                            for key, value in parser.items(sec)]
+                            for key, value in ep_parser.items(sec)]
 
         pyproject = root / 'pyproject.toml'
         self.build_system = {
