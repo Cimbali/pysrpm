@@ -15,7 +15,7 @@ def list_flavours(context, option, value):
         option (:class:`~click.Option`): The list-flavours flag
         value (`bool`): The list-flavours flag’s option, `True` iff the flag is present
     """
-    if not value:
+    if not value or context.resilient_parsing:
         return
 
     config = configparser.RawConfigParser(dict_type=collections.OrderedDict)
@@ -35,7 +35,8 @@ def list_flavours(context, option, value):
 @click.option('--flavour', '-f', help='RPM targets a specific linux flavour', type=str, default=None)
 @click.option('--config', '-c', type=click.Path(exists=True, dir_okay=False),
               help='Specify a config file manually, replaces any configuration from within the package')
-@click.option('--list-flavours', help='List the possible flavours', is_flag=True, callback=list_flavours)
+@click.option('--list-flavours', help='List the possible flavours', is_flag=True, callback=list_flavours,
+              expose_value=False, is_eager=True)
 # Override options whose defaults are under [pysrpm] in defaults.conf, with "_" replaced by "-"
 @click.option('--release', '-r', help='Release of the RPM package', type=str)
 @click.option('--rpm-base', help='Build directory', type=click.Path(exists=False, file_okay=False))
