@@ -9,10 +9,10 @@ test:
 	@pytest --color=yes
 
 dist/pysrpm-${VERSION}.tar.gz: $(SOURCES)
-	@python3 setup.py sdist
+	@python3 -m build --sdist
 
 dist/pysrpm-${VERSION}-py3-none-any.whl: $(SOURCES)
-	@python3 setup.py bdist_wheel
+	@python3 -m build --wheel
 
 build: ${PACKAGES}
 	@twine check $^
