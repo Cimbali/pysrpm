@@ -9,6 +9,7 @@ import tarfile
 import pathlib
 import fnmatch
 import tempfile
+import functools
 import subprocess
 import contextlib
 import configparser
@@ -136,12 +137,14 @@ class RPM:
         """ Configure the RPM building, loading the various configurations in order """
         options = self.config.options('pysrpm')
         # Load any config file, specified or from the package
+        toml = self.root / 'pyproject.toml'
+        cfg = self.root / 'setup.cfg'
         if self.config_file is not None:
-            self.load_user_config(self.config_file)
-        elif self.root.joinpath('pyproject.toml').exists():
-            self.load_user_config(self.root / 'pyproject.toml', from_project=True)
-        elif self.root.joinpath('setup.cfg').exists():
-            self.load_user_config(self.root / 'setup.cfg', from_project=True)
+            self.load_user_config(self.config_file, from_project=self.cli_options.pop('project_config', False))
+        elif toml.exists() and 'pysrpm' in RPM.load_toml_config(toml).get('tool', {}).keys():
+            self.load_user_config(toml, from_project=True)
+        elif cfg.exists():
+            self.load_user_config(cfg, from_project=True)
 
         if self.config.has_section('__templates__'):
             raise ValueError('The section name "__templates__" is reserved, do not use it in your configuration files')
@@ -183,6 +186,21 @@ class RPM:
             self.full_extraction()
 
 
+    @functools.cache
+    @staticmethod
+    def load_toml_config(path):
+        """ Load a TOML file
+
+        Args:
+            path (`str` or path-like): Path to a toml file to load
+
+        Returns:
+            `dict` or `None`: A dictionary of file contents
+        """
+        with open(path, 'rb') as f:
+            return tomli.load(f)
+
+
     def load_user_config(self, path, from_project=False):
         """ Load a config file into the RPM’s configparser, only evaluating interpolations in our own config parser
 
@@ -194,8 +212,7 @@ class RPM:
             `dict` or `None`: A dictionary of section name to section template
         """
         if pathlib.Path(path).suffix == '.toml':
-            with open(path, 'rb') as f:
-                config = tomli.load(f).get('tool', {}).get('pysrpm', {})
+            config = RPM.load_toml_config(path).get('tool', {}).get('pysrpm', {})
             # Move anything directy under 'pysrpm' into a nested table
             config['pysrpm'] = {key: config.pop(key) for key, value in config.copy().items() if type(value) is not dict}
         else:
@@ -284,9 +301,8 @@ class RPM:
             metadata['disabled-entry-points'] = ' '.join(disabled_entry_points)
 
         if pyproject.exists():
-            with open(pyproject, 'rb') as f:
-                self.build_system.update(tomli.load(f)['build-system'])
-                metadata['build-requires'] = self.build_system.get('build-requires', metadata['build-requires'])
+            self.build_system.update(RPM.load_toml_config(pyproject)['build-system'])
+            metadata['build-requires'] = self.build_system.get('build-requires', metadata['build-requires'])
         # If running setup.py, we don’t need setuptools to be >= 40.8.0 as it is required for pyproject.toml:
         elif (root / 'setup.py').exists():
             metadata['build-requires'] = ['setuptools']

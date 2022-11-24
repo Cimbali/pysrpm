@@ -35,6 +35,8 @@ def list_flavours(context, option, value):
 @click.option('--flavour', '-f', help='RPM targets a specific linux flavour', type=str, default=None)
 @click.option('--config', '-c', type=click.Path(exists=True, dir_okay=False),
               help='Specify a config file manually, replaces any configuration from within the package')
+@click.option('--project-config', '-p', is_flag=True,
+              help='Specified config file is a project config')
 @click.option('--list-flavours', help='List the possible flavours', is_flag=True, callback=list_flavours,
               expose_value=False, is_eager=True)
 # Override options whose defaults are under [pysrpm] in defaults.conf, with "_" replaced by "-"
