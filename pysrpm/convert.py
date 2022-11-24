@@ -96,7 +96,7 @@ def simplify_marker_to_rpm_condition(marker, environments, templates):
         else:
             evaluations = [evaluator.evaluate({env: val}) for val in environments[env]]
 
-        return (True if all(evaluations) else False if all(not(ev) for ev in evaluations) else True if env == 'extra'
+        return (True if all(evaluations) else False if all(not ev for ev in evaluations) else True if env == 'extra'
                 else _single_marker_to_rpm_condition(marker, templates))
 
     elif type(marker) is list:
